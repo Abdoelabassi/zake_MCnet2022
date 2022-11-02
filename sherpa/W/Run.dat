@@ -1,0 +1,27 @@
+(run){
+  % general setting
+  EVENTS 1M; ERROR 0.99;
+
+  % scales, tags for scale variations
+  SCALES METS{MU_F2}{MU_R2}{MU_Q2};
+
+  % exclude tau from lepton container
+  MASSIVE[15] 1;
+
+  % collider setup
+  BEAM_1 2212; BEAM_ENERGY_1 = 3500.;
+  BEAM_2 2212; BEAM_ENERGY_2 = 3500.;
+}(run)
+
+(processes){
+  Process 93 93 -> 90 91;
+  Order (*,2);
+  End process;
+}(processes)
+
+(selector){
+  Mass 11 -12 1. E_CMS
+  Mass 13 -14 1. E_CMS
+  Mass -11 12 1. E_CMS
+  Mass -13 14 1. E_CMS
+}(selector)

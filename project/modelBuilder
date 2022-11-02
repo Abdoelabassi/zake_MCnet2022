@@ -1,0 +1,199 @@
+#! /usr/bin/env python
+
+"""\
+Combine variations from YODA files into uncertainty estimates
+to produce an output YODA file with both statistical and generator
+uncertainties reflected in the error bars.
+
+Example:
+
+  %(prog)s [options] -i <YODA file> 
+
+"""
+
+from __future__ import print_function
+
+if __name__ == "__main__":
+
+  import argparse
+  parser = argparse.ArgumentParser(usage=__doc__)
+  parser.add_argument('-i', '--in', dest="INPUT", default=None,
+                      help="specify the YODA input file name (default = None)")
+  parser.add_argument('-o', '--out', dest="OUTPUT", default="model.yoda.gz",
+                      help="specify the YODA output file name (default = %(default)s)")
+  parser.add_argument("-m", "--match", action="append", dest="PATH_MATCH", default=[],
+                        help="only write out histograms whose $path/$name string matches any of these regexes")
+  parser.add_argument("-M", "--unmatch", action="append", dest="PATH_UNMATCH", default=[],
+                       help="exclude histograms whose $path/$name string matches any of these regexes")
+  parser.add_argument('-n', '--nominal', dest="NOMINAL", default=None,
+                      help="specify a variation weight that should be treated as the nominal weight (default = None)")
+  parser.add_argument("--env", action="append", dest="ENVELOPES", default=[],
+                        help="specify a comma-separated list of file names or weight names (or regexes thereof)\
+                              from which an envelope is to be constructed")
+  parser.add_argument("--pdf", action="append", dest="PDFBANDS", default=[],
+                        help="specify a comma-separated list of weight names (or regexes thereof)\
+                              from which a PDF band is to be constructed")
+  args = parser.parse_args()
+
+  import sys, os
+
+  if args.INPUT is None:
+    sys.exit('[ERROR] - Need to specify an input file with the central values for the model!')
+
+  # Get the path to the input file and check it's readable
+  yodafilepath = os.path.abspath(args.INPUT)
+  if not os.access(yodafilepath, os.R_OK):
+    sys.exit("[ERROR] - Cannot read from %s" % yodafilepath)
+
+  import yoda, rivet, lhapdf, re
+  import numpy as np
+  lhapdf.setVerbosity(0)
+
+  # Open input file and strip out pre-finalize objects
+  args.PATH_UNMATCH.append('RAW')
+  aos_in = yoda.read(yodafilepath, patterns=args.PATH_MATCH, unpatterns=args.PATH_UNMATCH)
+
+  wnames = set([ rivet.extractWeightName(name) for name in aos_in.keys() ])
+
+  if args.NOMINAL:
+    print('[INFO] - Will treat \"%s\" as the nominal weight.' % args.NOMINAL)
+
+  # Loop over remaining objects and construct the uncertainties
+  aos_out = { }
+  for aoname, ao in aos_in.items():
+    # Skip auxiliary objects
+    if any(tag in aoname for tag in [ '_XSEC', '_EVTCOUNT' ]):
+      continue
+
+    # Skip multiweighted objects
+    aop = rivet.AOPath(aoname)
+    if aop.varid(): 
+      continue
+
+    # Produce a scatter from the surviving object
+    ao_model = ao.mkScatter()
+
+    # sample nominal
+    noms = ao_model.yVals()
+
+    # central values
+    cvals = noms
+    if args.NOMINAL:
+      user_nominal = '%s[%s]' % (aop.basepath(), args.NOMINAL)
+      if user_nominal in aos_in:
+        ao_model = aos_in[user_nominal].mkScatter()
+        cvals = ao_model.yVals()
+      else:
+        sys.exit('[ERROR] - Could not find the requested multiweight \"%\".' % user_nominal)
+
+    # 1/sample_nominal to convert to relative uncertainties
+    abs2rel = [ 1/n if n else 0.0 for n in noms ]
+
+    errors = { }
+
+    # MC statistical uncertainties
+    errors['stats'] = ao_model.yErrAvgs() 
+
+    # envelopes  
+    for k, env in enumerate(args.ENVELOPES):
+
+      env_up = noms;  env_dn = noms
+
+      if env.endswith('.yoda') or env.endswith('.yoda.gz'):
+        # construct envelope from central values
+        # that live in speparate files
+        fnames = env.split(',')
+        for fname in fnames:
+          # Get the path to the input file and check it's readable
+          filepath = os.path.abspath(fname)
+          if not os.access(filepath, os.R_OK):
+            sys.exit("[ERROR] - Cannot read from %s" % filepath)
+
+          # construct file-based envelope 
+          varhists = yoda.read(filepath, patterns=args.PATH_MATCH, unpatterns=args.PATH_UNMATCH)
+          temp = varhists[aop.basepath()].mkScatter().yVals() 
+          env_dn = np.array(list(map(min, zip(env_dn, temp))))
+          env_up = np.array(list(map(max, zip(env_up, temp))))
+      else:
+        # construct envelope from multiweights
+
+        # construct variation hist names if the supplied pattern
+        # matches the variation name
+        varnames = [ '%s[%s]' % (aoname, var) for var in wnames if \
+                     any([ re.search(pat, var) for pat in env.split(',') ]) ]
+        if len(varnames) == 0:
+          sys.exit("[ERROR] - No variations for the envelope \"%s\" selected." % env)
+
+        # construct multiweight-based envelope
+        for var in varnames:
+          temp = aos_in[var].mkScatter().yVals()
+          env_dn = np.array(list(map(min, zip(env_dn, temp))))
+          env_up = np.array(list(map(max, zip(env_up, temp))))
+       
+      # add envelope (dn, up) components to the error map
+      errors['Envelope%i' % (k+1)] = [(noms-env_dn)*abs2rel, (env_up-noms)*abs2rel]
+
+    # PDF bands
+    for k, pdf in enumerate(args.PDFBANDS):
+
+      varnames = [ '%s[%s]' % (aoname, var) for var in wnames if \
+                   any([ re.search(pat, var) for pat in pdf.split(',') ]) ]
+      if len(varnames) == 0:
+        sys.exit("[ERROR] - No variations for the PDF band \"%s\" selected." % pdf)
+
+      # construct PDF band
+      nPDF = None; PDFset = None
+      PDFvars = [ ] # outer idx PDF vars, inner idx bins
+      for var in varnames:
+        PDFvars.append(aos_in[var].mkScatter().yVals())
+        if PDFset is None:
+          lhapdfID = int(re.search('PDF[0-9]*', var).group(0)[3:])
+          try:
+            PDFset = lhapdf.mkPDF(lhapdfID).set()
+            nPDF = int(PDFset.size)
+          except RuntimeError as e:
+            pdfname = str(e).split("'")[-2]
+            ouch  = '[ERROR] - Could not find PDF set!\n'
+            ouch += 'You can download it into the PDFsets directory using:\n'
+            ouch += '\twget http://lhapdfsets.web.cern.ch/lhapdfsets/current/'
+            ouch += '%s.tar.gz  -P PDFsets -O- | tar --no-same-owner -xz -C PDFsets' % pdfname
+            sys.exit(ouch)
+      if PDFset is None:
+        sys.exit("[ERROR] - Could not extract LHAPDF ID from weight names that match the supplied pattern:\n", varnames)
+      if len(PDFvars) == nPDF - 1:
+        # if the number of PDF variations is off by 1,
+        # probably the nominal weight is missing
+        PDFvars.insert(0, noms)
+      PDFvars = list(map(list, zip(*PDFvars))) # transpose: outer idx bins, inner idx vars
+      PDFunc  = [ PDFset.uncertainty(members) for members in PDFvars ]
+      PDFdn = np.array([ unc.errminus for unc in PDFunc ])
+      PDFup = np.array([ unc.errplus  for unc in PDFunc ])
+      # add PDF band (dn, up) components to the error map
+      errors['PDF%i' % (k+1)] = [PDFdn*abs2rel, PDFup*abs2rel]
+
+
+    # work out total uncertainty and add the error breakdown 
+    ao_model.rmVariations() # clear existing breakdown
+    for i in range(ao_model.numPoints()):
+      tot_up = 0.; tot_dn = 0.
+      for etype, errs in errors.items():
+        if etype == 'stats': # symmetric
+          tot_up += errs[i]**2
+          tot_dn += errs[i]**2
+          ao_model.point(i).setYErrs(errs[i], etype)
+        else: # (potentially) asymmetric
+          abs_dn = cvals[i] * errs[0][i]
+          abs_up = cvals[i] * errs[1][i]
+          tot_dn += abs_dn**2
+          tot_up += abs_up**2
+          ao_model.point(i).setYErrs(abs_dn, abs_up, etype)
+      # update total error
+      ao_model.point(i).setYErrs(np.sqrt(tot_dn), np.sqrt(tot_up))
+    # push the breakdown
+    ao_model.writeVariationsToAnnotations()
+
+    aos_out[aoname] = ao_model
+    
+  # Write out surviving objects
+  yoda.writeYODA(aos_out, args.OUTPUT)
+

@@ -1,0 +1,418 @@
+\documentclass[10pt]{article}
+
+\usepackage{fullpage}
+\usepackage{amsmath}
+\usepackage{helvet}
+\usepackage{url}
+
+\begin{document}
+
+\title{{\Huge\bf Introduction to Sherpa}}
+\author{{\Large Tutorial for summer schools}}
+\date{}
+\maketitle
+
+\section{Prerequisites}
+
+For this tutorial, we will be using Docker. To download the image for Sherpa and Rivet, simply type
+%
+\begin{verbatim}
+  docker pull hepstore/rivet-sherpa:3.1.6
+\end{verbatim}
+%
+We have provided a little setup.sh script which will let you use the image
+software outside of the container
+%
+You can source the script like so
+%
+\begin{verbatim}
+  source setup.sh
+\end{verbatim}
+%
+which should give you access to all relevant command-line tools. To check that
+it worked, try e.g.
+%
+\begin{verbatim}
+  rivet --version
+\end{verbatim}
+%
+which should return \texttt{rivet v3.1.6}. You can pass other commands to the
+Docker environment using the dockerdo alias, e.g.
+%
+\begin{verbatim}
+  dockerdo Sherpa
+\end{verbatim}
+%
+Alternatively, you can run the container interactively, e.g. like so
+%
+\begin{verbatim}
+  docker container run -it hepstore/rivet-sherpa:3.1.6 /bin/bash
+\end{verbatim}
+%
+If you would like to have access to your current directory also from within the container,
+you can also use the following variation of the above command:
+%
+\begin{verbatim}
+  docker container run -it -v $PWD:$PWD -w $PWD hepstore/rivet-sherpa:3.1.6 /bin/bash
+\end{verbatim}
+%
+For more details/troubleshooting on docker also have a look at the main tutorial
+website and the common project page!
+
+You can download the example run cards used in this tutorial from gitlab.
+
+\section{A First Sherpa Run}
+
+Sherpa is a complete Monte-Carlo event generator for particle production at
+lepton-lepton, lepton-hadron, and hadron-hadron colliders~\cite{Gleisberg:2008ta}.
+The simulation of higher-order perturbative QCD effects, including NLO corrections 
+to hard processes and resummation as encoded in the parton shower, is emphasized 
+in Sherpa. QED radiation, underlying events, hadronization and hadron decays can
+also be simulated. Alternatively, Sherpa can be used for pure parton-level NLO QCD 
+calculations with massless or massive partons.
+
+Many reactions at the LHC suffer from large higher-order QCD corrections.
+The correct simulation of Bremsstrahlung in these processes is essential. It can 
+be tackled either in the parton-shower approach, or using fixed-order calculations.
+Sherpa combines both these methods using a technique known as Matrix Element + 
+Parton Shower merging (ME+PS). Details are described in Ref.~\cite{Buckley:2011ms}
+and have been discussed in the lectures. This tutorial will show
+you how to use the method in Sherpa.
+
+\subsection{The Input File}
+
+Sherpa is steered using input files, which consist of several sections.
+A comprehensive list of all input parameters for Sherpa is given in the
+Sherpa manual~\cite{SherpaManual}. For the purpose of this tutorial, 
+we will focus on the most relevant ones.
+
+Download the first example run card from gitlab (since Sherpa writes out data
+during its runs, it might be advisable to create separate directories for each run):
+%
+\begin{verbatim}
+  mkdir TTbar && cd TTbar\\
+  wget https://gitlab.com/hepcedar/mcnet-schools/zakopane-2022/-/raw/main/sherpa/TTbar/Run.dat
+\end{verbatim}
+
+Open the {\tt Run.dat} file in an editor. Have a look at the section which is
+delimited by the tags {\tt(run)\{} and {\tt \}(run)} (We will call this section
+the {\tt(run)} section in the following).  You will find the specification of
+the collider, i.e.\ its beam type and center-of-mass  energy, as well as a
+couple of other parameters, which will be explained later. 
+
+The {\tt(processes)} section specifies, which reactions are going to be simulated.
+Particles are identified by their PDG codes, i.e.\ 1 stands for a down-quark, 
+-1 stands for an anti-down, 2 for an up-quark, etc. 
+The special code 93 represents a ``container'', which comprises all light quarks,
+b-quarks, and the gluon. It is also called the ``jet'' container.
+
+\subsection{Running Sherpa}
+\label{sec:running_sherpa}
+
+Have you found out which physics process is going to be generated?
+You can verify your guess by running the command line (Note that all commands
+in this section must be prefixed by {\tt docker-run-sherpa} or run inside a shell
+started by {\tt docker-run-sherpa bash}. Running inside a shell is recommended.
+See the introduction for details.)
+\begin{verbatim}
+  Sherpa -e1 -o3
+\end{verbatim}
+When run for the first time, Sherpa will produce diagram information for the calculation
+of hard scattering processes. It will also compute that hard scattering cross sections,
+which are stored, together with the diagram information, for subsequent runs.
+
+The option {\tt -e1} used above instructs Sherpa to produce one event, and the option 
+{\tt -o3} will print the result of event generation on the screen. You will see Sherpa's 
+internal event record. Search for {\tt Signal Process} inside the output and check 
+incoming and outgoing particles.
+What happens to the unstable particles after they have been produced in the hard 
+scattering? Is this result physically meaningful?
+
+Have a look at the Feynman diagrams, which contribute to the simulation of the hard process:
+\begin{verbatim}
+  plot_graphs.sh graphs/
+  firefox graphs/index.html
+\end{verbatim}
+Are these the diagrams you expect to find? If not, which ones are missing?
+Can you find the setting in the runcard which restricts the set of diagrams?
+
+\subsection{Unstable particles}
+
+Open the input file again. Add the setting {\tt HARD\_DECAYS On;}
+(note the underscore, and be aware that Sherpa run cards are case sensitive) to
+the {\tt(run)} section, which instructs Sherpa to automatically  
+decay unstable particles. Verify that the particles you wish to decay are
+flagged unstable by checking the screen output of Sherpa during runtime. 
+Search for the {\tt `List of Particle Data'}. Note that you can set particles
+stable individually using the switch {\tt STABLE[<PDG ID>]=1}.
+
+Run again 
+\begin{verbatim}
+  Sherpa -e1 -o3
+\end{verbatim}
+and observe how the event record changes.
+
+For experts: What happens when you change or remove the setting {\tt WIDTH[6] 0;}
+(Hint: Search for {\tt `Performing tests'} in the screen output of Sherpa).
+Can you guess what the problem might be?
+
+\subsection{ME+PS merging}
+
+The current runcard lets Sherpa generate events at lowest order in the strong coupling.
+To improve the description of real radiative corrections, we can include higher-multiplicity
+tree-level contributions in the simulation. This is done by changing the process specification
+
+\begin{verbatim}
+  Process 93 93 -> 6 -6;
+\end{verbatim}
+to
+\begin{verbatim}
+  Process 93 93 -> 6 -6 93{1};
+\end{verbatim}
+The last entry instructs Sherpa to produce up to one additional ``jet'' using
+hard matrix elements and combine the respective process with the leading-order process.
+This is known as Matrix Element + Parton Shower merging (ME+PS), or the CKKW method.
+The essence of the method is a separation of hard from soft radiative corrections,
+achieved using phase-space slicing by means of a variable called the jet criterion. The slicing parameter is called the merging cut.
+
+Let us assume we want to classify jets of more than 20~GeV transverse momentum as hard.
+In Sherpa, the corresponding merging cut would be specified as
+\begin{verbatim}
+  CKKW sqr(20/E_CMS);
+\end{verbatim}
+Therefore, the complete {\tt (processes)} section for the merged event sample reads:
+\begin{verbatim}
+  (processes){
+    Process 93 93 -> 6 -6 93{1};
+    CKKW sqr(20/E_CMS);
+    Order (*,0);
+    End process;
+  }(processes);
+\end{verbatim}
+If you like, you can have a look at the Feynman graphs again, which contribute
+to the ME+PS merged event sample. In this case, you should not remove the line
+{\tt Print\_Graphs graphs;} from the {\tt (processes)} section, and rerun the 
+plot command from Sec.~\ref{sec:running_sherpa}.
+%
+Run the new setup. Why does Sherpa compute another cross section?
+
+\subsection{Analyses}
+
+By default, Sherpa does not store events. Run Sherpa with the following command 
+to write out weighted event files in HepMC format, which can subsequently be analyzed
+\begin{verbatim}
+  Sherpa EVENT_OUTPUT=HepMC3_GenEvent[events_1j]
+\end{verbatim}
+Sherpa will produce a gzipped file called {\tt events\_1j.hepmc}, 
+which can be processed with Rivet. Alternatively, you can use Sherpa's interface
+to rivet, to analyse event directly without writing out large amounts of
+data. To do that, add the following line to the {\tt (run)} section of your run
+card
+%
+\begin{verbatim}
+  ANALYSIS Rivet
+\end{verbatim}
+%
+To tell rivet what analysis should be used, you have to add a new section to the
+run card
+\begin{verbatim}
+(analysis){
+  BEGIN_RIVET {
+    -a MC_TTBAR;
+  } END_RIVET;
+}(analysis);
+\end{verbatim}
+The option {\tt -a MC\_TTBar} instructs Rivet to run a Monte-Carlo analysis 
+of semileptonic $t\bar{t}$ events, which will provide us with a few observables
+that can be used for diagnostic purposes.
+%
+You can change the name of the produced yoda file by adding
+%
+\begin{verbatim}
+  ANALYSIS_OUTPUT=Analysis.yoda
+\end{verbatim}
+in the  {\tt (run)} section or on the command line
+\begin{verbatim}
+  Sherpa -A Analysis.yoda
+\end{verbatim}
+%
+You can view the results of this analysis by running the command
+\begin{verbatim}
+  rivet-mkhtml --mc-errs Analysis.yoda
+\end{verbatim}
+and opening {\tt rivet-plots/index.html} in a browser.
+
+Now it is your turn: Generate a separate file without ME+PS merging 
+and analyze it with Rivet. Compare the results to your previous analysis 
+using {\tt rivet-mkhtml}. Do you observe any differences? Why?
+
+\subsection{Other hard scattering processes}
+
+For the project, we want to simulate the production of a lepton and a
+neutrino. Can you figure out how to change the {\tt (process)} section of your
+run card? (Hint: Similar to {\tt 93} for partons, Sherpa also defines containers
+{\tt 90} for leptons and {\tt 91} for neutrinos.)
+
+Note that, by default, the lepton container also includes $\tau$-leptons. You
+can exclude them by adding
+%
+\begin{verbatim}
+  MASSIVE[15] 1
+\end{verbatim}
+%
+to the {\tt (run)} section (15 is the PDG code for $\tau$s). You will also need
+a new section
+%
+\begin{verbatim}
+  (selector){
+    Mass 11 -12 1. E_CMS
+    Mass 13 -14 1. E_CMS
+    Mass -11 12 1. E_CMS
+    Mass -13 14 1. E_CMS
+  }(selector)
+\end{verbatim}
+%
+Why is this section needed? You can also find a ready made example run card for this process in\\
+\texttt{sherpa/W/Run.dat} on the tutorial gitlab page.
+
+\section{Advanced options}
+
+At this point you will probably want to have a look at the project description
+on the gitlab page and setup Sherpa to study W production at the LHC and analyse
+the results. You can use the suggestions below to study systematic uncertainties
+of this calculation.
+
+\subsection{Uncertainty estimates}
+
+Using Sherpa, you can study the renormalization and factorization
+scale dependence of the simulation as well as the uncertainty
+related to the PDF fit. Thanks to reweighting techniques, this can be done
+on-the-fly, without running Sherpa multiple times. The reweighting is enabled in
+Sherpa by adding the following flags to the {\tt (run)} section of you input file:
+\begin{verbatim}
+  SCALE_VARIATIONS 0.25,0.25 0.25,1 1,0.25 1,4 4,1 4,4;
+  PDF_LIBRARY LHAPDFSherpa; PDF_SET NNPDF30_nnlo_as_0118;
+  PDF_VARIATIONS NNPDF30_nnlo_as_0118[all];
+\end{verbatim}
+The line starting with {\tt SCALE\_VARIATIONS} instructs Sherpa to perform a
+six-point variation of the renormalization and factorization scales,
+with the pairs of numbers representing the scale factors for $\mu_R^2$
+and $\mu_F^2$. The line starting with {\tt PDF\_VARIATIONS} instructs Sherpa
+to perform a variation using all PDFs in the error set {\tt NNPDF30\_nnlo\_as\_0118}, which
+is interfaced through LHAPDF. Finally, the default PDF is set to {\tt NNPDF30\_nnlo\_as\_0118}.
+Depending on the rivet version used, you might have to add
+\begin{verbatim}
+  HEPMC_USE_NAMED_WEIGHTS 1;
+  SKIPWEIGHTS 0;
+\end{verbatim}
+in the {\tt (analysis)} section, after the {\tt BEGIN\_RIVET} line.
+
+\subsection{Hadronization and underlying event}
+
+So far, multiple parton interactions, which provide a model for the underlying event,
+have not been simulated. Also, hadronization has not been included in order to speed up
+event generation. You can enable both by removing or commenting the line
+\begin{verbatim}
+  MI_HANDLER None; FRAGMENTATION Off;
+\end{verbatim}
+How do the predictions for the observables change and why?
+
+\subsection{Changing model parameters}
+
+You can change model parameters like coupling strengths, particle widths and
+particle masses in the run card. Have a look in the manual for a full overview
+of the available options. To change, for example, the mass of the $W$ boson, you
+would include the following line (which in fact sets the mass to its default
+value)
+\begin{verbatim}
+  MASS[24] = 80.385;
+\end{verbatim}
+
+\subsubsection{Side note: Tags}
+
+A useful feature of Sherpa run cards are "tags": A line like
+\begin{verbatim}
+  FOO:=5
+\end{verbatim}
+will define a tag "FOO" to represent "5". Any occurence of "FOO" in the run card
+will then be replaced by "5" (be aware of unwanted consequences however,
+something like {\tt ALPHA:=foo; ALPHAS(MZ) 0.1188;} will obviously cause
+problems). Tags, as well as any other parameter, can also be set on the command
+line. Adding the following to your run card
+\begin{verbatim}
+  MW:=385
+  MASS[24] = 80.MW;
+  ANALYSIS_OUTPUT = Analysis_mWMW
+  RESULT_DIRECTORY = Results_mWMW
+\end{verbatim}
+will for example allow you to run Sherpa with different $W$ masses like
+\begin{verbatim}
+  Sherpa MW:=385
+\end{verbatim}
+which will recalculate the cross section and generate events with the modified
+$W$ mass and write the results for different masses into different files.
+
+\subsection{Variation of the merging cut}
+
+ME+PS merging is based on phase-space slicing, and the slicing cut is called 
+the merging scale. Is is an unphysical parameter, and no observable should
+depend sizeably on its precise value. Verify this by varying the merging
+cut by a factor of two up and down.
+
+Note that the initial cross sections that Sherpa computes will be different 
+for different values of the merging cut (Why?). You should therefore instruct 
+Sherpa to use different result directories for each run in the test. 
+The result directory is specified on the command line with option {\tt -r},
+for example
+\begin{verbatim}
+  Sherpa -r MyResultDirectory/
+\end{verbatim}
+
+\subsection{QED Corrections}
+Higher order QED corrections are effected both on hard interaction and, upon their 
+formation, on each hadron’s subsequent decay. The Photons module is called 
+in both cases for this task. It employes a YFS-type resummation of all 
+infrared singular terms to all orders and is equipped with complete first order 
+corrections for the most relevant cases (all other ones receive approximate 
+real emission corrections built up by Catani-Seymour splitting kernels).
+Add the following flags to the {\tt (run)} section
+\begin{verbatim}
+YFS_MODE = [0,1,2]
+YFS_USE_ME = [0,1]
+\end{verbatim}
+{\tt YFS\_MODE}, unsurprisingly, specifies the mode in which Photons will
+treat the resummation. {\tt YFS\_MODE = 0 } turns off Photons completely.
+{\tt YFS\_MODE = 1} is a "soft only" treatment, meaning soft emissions 
+will be treated correctly to all orders but no hard emission corrections 
+will be included. 
+To include hard emission corrections up to first order in $\alpha_{\text{QED}}$
+set the mode to {\tt YFS\_MODE=2}.
+The switch {\tt YFS\_USE\_ME = [0,1]} specifies how the hard emissions 
+are treated. If {\tt YFS\_USE\_ME = 0}, then Photons will use 
+collinearly approximated real emission matrix elements. Virtual emission 
+matrix elements of order $\alpha_{\text{QED}}$ are ignored. If, however, {\tt YFS\_USE\_ME = 1}, 
+then exact real and/or virtual emission matrix elements are used wherever
+ possible.
+This treatment is completely exclusive in the photon multiplicity and 
+the event will include additional photons. You can verify this by 
+checking your HepMC output file. Since we now have soft emissions, how
+do we ensure we have an infrared and collinear safe observable?
+
+\begin{thebibliography}{1}
+
+\bibitem{Gleisberg:2008ta}
+T.~Gleisberg et~al.
+``Event generation with SHERPA 1.1.''
+JHEP {\bf 02} (2009) 007.
+
+\bibitem{Buckley:2011ms}
+A.~Buckley et~al.
+``General-purpose event generators for LHC physics.''
+Phys.\ Rept.\ {\bf 504} (2011) 145.
+
+\bibitem{SherpaManual}
+https://sherpa.hepforge.org/doc/SHERPA-MC-2.0.0.html.
+
+\end{thebibliography}
+
+\end{document}

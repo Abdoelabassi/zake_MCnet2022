@@ -1,0 +1,133 @@
+#! /usr/bin/env python
+
+"""\
+Compare one or more models against a reference file and select
+the one with the best chi2 test statistic.
+
+Example:
+
+  %(prog)s [options] --ref <YODA file>  <YODA file> [<YODA file2> ...]
+
+"""
+
+from __future__ import print_function
+
+if __name__ == "__main__":
+
+
+  import argparse
+  parser = argparse.ArgumentParser(usage=__doc__)
+  parser.add_argument("MODELS", nargs="*")
+  parser.add_argument('-r', '--ref', dest="REF", default=None,
+                      help="specify the YODA input file name (default = None)")
+  parser.add_argument("-m", "--match", action="append", dest="PATH_MATCH", default=[],
+                        help="only compare histograms whose $path/$name string matches any of these regexes")
+  parser.add_argument("-M", "--unmatch", action="append", dest="PATH_UNMATCH", default=[],
+                       help="exclude histograms whose $path/$name string matches any of these regexes")
+
+  args = parser.parse_args()
+
+  import sys, os
+
+  if args.REF is None:
+    sys.exit('[ERROR] - Need to specify an reference file to compare to!')
+
+  if len(args.MODELS) == 0:
+    sys.exit('[ERROR] - Need to supply at least one model file!')
+
+  if not(args.REF.endswith('.yoda') or args.REF.endswith('.yoda.gz')):
+    sys.exit('[ERROR] - Supplied reference is not a YODA file: %s' % args.REF)
+
+
+  import yoda, rivet
+  import numpy as np
+  withPval = True
+  try:
+    from scipy import stats
+  except ImportError:
+    withPval = False
+
+  class Model(object):
+    def __init__(self, filename):
+      self.filename = filename
+
+      self.path = os.path.abspath(filename)
+      if not os.access(self.path, os.R_OK):
+        sys.exit("[ERROR] - Cannot read from %s" % self.path)
+
+      self.aos = yoda.read(self.path)
+      if len(self.aos) == 0:
+        sys.exit('[ERROR] - Could not find any distributions in file ' + filename)
+
+      self.patterns = [ rivet.AOPath(p).basepath() for p in self.aos.keys() ]
+
+    def name(self):
+      return self.filename
+
+    def aonames(self):
+      return self.patterns
+
+    def values(self, patterns = None):
+      if patterns is None: 
+        patterns = self.aonames()
+      matches = np.array([ao.yVals() for name, ao in self.aos.items() \
+                           if rivet.AOPath(name).basepath() in patterns])
+      return  np.concatenate(tuple(matches), axis=0) if len(matches) > 1 else matches[0]
+
+    def errors(self, patterns = None):
+      if patterns is None: 
+        patterns = self.aonames()
+      matches = np.array([ao.yErrAvgs() for name, ao in self.aos.items() \
+                           if rivet.AOPath(name).basepath() in patterns])
+      return  np.concatenate(tuple(matches), axis=0) if len(matches) > 1 else matches[0]
+
+    def ndof(self):
+      return len(self.values()) - 1
+      
+
+  def chi2test(obs, exp):
+    """Calculate a Chi2 test statistic for an
+       obsserved and an expexted distribution."""
+    refaos = obs.aonames() # only compare distributions for which a ref exists
+    sqerr = obs.errors() ** 2 + exp.errors(refaos) ** 2
+    with np.errstate(divide='ignore', invalid='ignore'):
+      chi2 = np.nansum((obs.values() - exp.values(refaos)) ** 2 / sqerr)
+    pval = 1 - stats.chi2.cdf(chi2, obs.ndof()) if withPval else None
+    target = np.abs(chi2/obs.ndof() - 1) # reduced chi2 should be around 1 
+    return target, chi2, obs.ndof(), pval
+
+
+  def rankModels(ref, models):
+    results = [ ]
+    for mod in models:
+      target, chi2, ndof, pval = chi2test(ref, mod)
+      results.append([ target, chi2, ndof, pval, mod.name() ])
+      msg = '\tCandidate model from \"%s\" has a ' % mod.name() 
+      msg += 'Chi2/Ndof = %.1f/%i = %.3f' % (chi2, ndof, chi2/ndof)
+      if not pval is None:
+        msg += ' (p-value = %e)' % pval
+      print (msg + '.')
+    return  sorted(results, key = lambda x : x[0]) # choose chi2/Ndof closest to unity
+
+
+  # Get reference
+  ref = Model(args.REF)
+
+  # Get models
+  models = [ ]
+  for fname in args.MODELS:
+    if not(fname.endswith('.yoda') or fname.endswith('.yoda.gz')):
+      sys.exit('[ERROR] - Supplied model is not a YODA file: %s' % fname)
+    models.append( Model(fname) )
+
+  # do a Chi2 test and sort them based on level of agreement
+  sorted_fits = rankModels(ref, models)
+
+  # pick the best one
+  _, chi2, ndof, pval, name = sorted_fits[0]
+  msg = 'Best model is from \"%s\" with a ' % name
+  msg += 'Chi2/Ndof = %.1f/%i = %.3f' % (chi2, ndof, chi2/ndof)
+  if not pval is None:
+    msg += ' (p-value = %e)' % pval
+  print (msg + '.')
+

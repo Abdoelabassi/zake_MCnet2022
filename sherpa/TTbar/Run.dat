@@ -1,0 +1,24 @@
+(run){
+  # general settings
+  EVENTS 25000;
+
+  # collider setup
+  BEAM_1 2212; BEAM_ENERGY_1 3500;
+  BEAM_2 2212; BEAM_ENERGY_2 3500;
+
+  # generator parameters
+  WIDTH[6] 0;
+
+  # scale choice
+  CORE_SCALE VAR{sqr(175)};
+
+  # settings to accelerate event generation
+  MI_HANDLER None; FRAGMENTATION Off;
+}(run);
+
+(processes){
+  Process 93 93 -> 6 -6;
+  Order (*,0);
+  Print_Graphs graphs;
+  End process;
+}(processes);
